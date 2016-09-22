@@ -1,87 +1,83 @@
 ﻿using UnityEngine;
 using System.Collections.Generic;
 
-[ExecuteInEditMode]
+[ExecuteInEditMode] //即使在编辑模式下也能实时响应
 public class MyMirror : MonoBehaviour
 {
-    public bool m_DisablePixelLights = true;
-    public int m_TextureSize = 256;
-    public float m_ClipPlaneOffset = 0.07f;
-    public bool m_IsFlatMirror = true;
+    public bool disablePixelLights = true; //禁用像素光（平行光）
+    public int textureSize = 256; //将反射相机的画面渲染到一张贴图上，贴图越大结果越光滑，资源消耗越大
+    public float clipPlaneOffset = 0.07f; //裁剪平面偏移？？
+    public LayerMask reflectLayers = -1; //层级遮罩，为Int32类型，每一位代表一个层级，-1表示所有层级
 
-    public LayerMask m_ReflectLayers = -1;
+    private Dictionary<Camera, Camera> m_ReflectionCameras = new Dictionary<Camera, Camera>(); //反射相机
+    private RenderTexture m_ReflectionTexture; //呈现反射相机画面的RenderTexture贴图
+    private int m_OldReflectionTextureSize; //用于存储原有的渲染贴图大小
 
-    private Dictionary<Camera, Camera> m_ReflectionCameras = new Dictionary<Camera, Camera>();
-
-    private RenderTexture m_ReflectionTexture = null;
-    private int m_OldReflectionTextureSize = 0;
-
-    private static bool s_InsideRendering = false;
-
+    /// <summary>
+    /// 当物体要被某个相机渲染时调用此函数
+    /// 此函数实现了渲染反射
+    /// 因为该脚本设置为可以在编辑模式下执行，所以反射效果可以在scene中看到
+    /// </summary>
     public void OnWillRenderObject()
     {
+        //确保该脚本已经被启用并且存在渲染组件，有材质，并且被启用
         if (!enabled || !GetComponent<Renderer>() || !GetComponent<Renderer>().sharedMaterial || !GetComponent<Renderer>().enabled)
+        {
             return;
+        }
 
+        //获取当前相机，并且判断是否正常
         Camera cam = Camera.current;
         if (!cam)
+        {
             return;
-
-        if (s_InsideRendering)
-            return;
-        s_InsideRendering = true;
+        }
 
         Camera reflectionCamera;
         CreateMirrorObjects(cam, out reflectionCamera);
 
         Vector3 pos = transform.position;
-        Vector3 normal;
-        if (m_IsFlatMirror)
-        {
-            normal = transform.up;
-        }
-        else
-        {
-            normal = transform.position - cam.transform.position;
-            normal.Normalize();
-        }
+        Vector3 normal = transform.up;
+
         int oldPixelLightCount = QualitySettings.pixelLightCount;
-        if (m_DisablePixelLights)
+        if (disablePixelLights)
+        {
             QualitySettings.pixelLightCount = 0;
+        }
 
         UpdateCameraModes(cam, reflectionCamera);
 
-        float d = -Vector3.Dot(normal, pos) - m_ClipPlaneOffset;
+        float d = -Vector3.Dot(normal, pos) - clipPlaneOffset;
         Vector4 reflectionPlane = new Vector4(normal.x, normal.y, normal.z, d);
 
         Matrix4x4 reflection = Matrix4x4.zero;
         CalculateReflectionMatrix(ref reflection, reflectionPlane);
+
         Vector3 oldpos = cam.transform.position;
         Vector3 newpos = reflection.MultiplyPoint(oldpos);
         reflectionCamera.worldToCameraMatrix = cam.worldToCameraMatrix * reflection;
 
+        Vector4 clipPlane = CameraSpacePlane(reflectionCamera, pos, normal, -1.0f);
+        reflectionCamera.projectionMatrix = cam.CalculateObliqueMatrix(clipPlane);
 
-        Vector4 clipPlane = CameraSpacePlane(reflectionCamera, pos, normal, 1.0f);
-        Matrix4x4 projection = cam.projectionMatrix;
-        CalculateObliqueMatrix(ref projection, clipPlane);
-        reflectionCamera.projectionMatrix = projection;
+        reflectionCamera.cullingMatrix = cam.projectionMatrix * cam.worldToCameraMatrix;
 
-        reflectionCamera.cullingMask = ~(1 << 4) & m_ReflectLayers.value;
+        reflectionCamera.cullingMask = ~(1 << 4) & reflectLayers.value;
         reflectionCamera.targetTexture = m_ReflectionTexture;
         bool oldCulling = GL.invertCulling;
         GL.invertCulling = !oldCulling;
         reflectionCamera.transform.position = newpos;
         Vector3 euler = cam.transform.eulerAngles;
-        reflectionCamera.transform.eulerAngles = new Vector3(0, euler.y, euler.z);
+        reflectionCamera.transform.eulerAngles = new Vector3(-euler.x, euler.y, euler.z);
         reflectionCamera.Render();
         reflectionCamera.transform.position = oldpos;
         GL.invertCulling = oldCulling;
         GetComponent<Renderer>().sharedMaterial.SetTexture("_ReflectionTex", m_ReflectionTexture);
 
-        if (m_DisablePixelLights)
+        if (disablePixelLights)
+        {
             QualitySettings.pixelLightCount = oldPixelLightCount;
-
-        s_InsideRendering = false;
+        }
     }
 
     void OnDisable()
@@ -92,107 +88,37 @@ public class MyMirror : MonoBehaviour
             m_ReflectionTexture = null;
         }
         foreach (var kvp in m_ReflectionCameras)
-            DestroyImmediate(((Camera)kvp.Value).gameObject);
+        {
+            DestroyImmediate((kvp.Value).gameObject);
+        }
         m_ReflectionCameras.Clear();
     }
 
-
-    private void UpdateCameraModes(Camera src, Camera dest)
+    void Update()
     {
-        if (dest == null)
-            return;
+        //if (!GetComponent<Renderer>())
+        //{
+        //    return;
+        //}
+        //Material mat = GetComponent<Renderer>().sharedMaterial;
+        //if (!mat)
+        //{
+        //    return;
+        //}
 
-        dest.clearFlags = src.clearFlags;
-        dest.backgroundColor = src.backgroundColor;
-        if (src.clearFlags == CameraClearFlags.Skybox)
-        {
-            Skybox sky = src.GetComponent(typeof(Skybox)) as Skybox;
-            Skybox mysky = dest.GetComponent(typeof(Skybox)) as Skybox;
-            if (!sky || !sky.material)
-            {
-                mysky.enabled = false;
-            }
-            else
-            {
-                mysky.enabled = true;
-                mysky.material = sky.material;
-            }
-        }
-
-        dest.farClipPlane = src.farClipPlane;
-        dest.nearClipPlane = src.nearClipPlane;
-        dest.orthographic = src.orthographic;
-        dest.fieldOfView = src.fieldOfView;
-        dest.aspect = src.aspect;
-        dest.orthographicSize = src.orthographicSize;
-        dest.renderingPath = src.renderingPath;
-    }
-
-
-    private void CreateMirrorObjects(Camera currentCamera, out Camera reflectionCamera)
-    {
-        reflectionCamera = null;
-
-
-        if (!m_ReflectionTexture || m_OldReflectionTextureSize != m_TextureSize)
-        {
-            if (m_ReflectionTexture)
-                DestroyImmediate(m_ReflectionTexture);
-            m_ReflectionTexture = new RenderTexture(m_TextureSize, m_TextureSize, 16);
-            m_ReflectionTexture.name = "__MirrorReflection" + GetInstanceID();
-            m_ReflectionTexture.isPowerOfTwo = true;
-            m_ReflectionTexture.hideFlags = HideFlags.DontSave;
-            m_OldReflectionTextureSize = m_TextureSize;
-        }
-
-        m_ReflectionCameras.TryGetValue(currentCamera, out reflectionCamera);
-
-        if (!reflectionCamera)
-        {
-            GameObject go = new GameObject("Mirror Refl Camera id" + GetInstanceID() + " for " + currentCamera.GetInstanceID(), typeof(Camera), typeof(Skybox));
-            reflectionCamera = go.GetComponent<Camera>();
-            reflectionCamera.enabled = false;
-            reflectionCamera.transform.position = transform.position;
-            reflectionCamera.transform.rotation = transform.rotation;
-            reflectionCamera.gameObject.AddComponent<FlareLayer>();
-            go.hideFlags = HideFlags.HideAndDontSave;
-            m_ReflectionCameras[currentCamera] = reflectionCamera;
-        }
-    }
-
-    private static float sgn(float a)
-    {
-        if (a > 0.0f) return 1.0f;
-        if (a < 0.0f) return -1.0f;
-        return 0.0f;
     }
 
     private Vector4 CameraSpacePlane(Camera cam, Vector3 pos, Vector3 normal, float sideSign)
     {
-        Vector3 offsetPos = pos + normal * m_ClipPlaneOffset;
+        Vector3 offsetPos = pos + normal * clipPlaneOffset;
         Matrix4x4 m = cam.worldToCameraMatrix;
         Vector3 cpos = m.MultiplyPoint(offsetPos);
         Vector3 cnormal = m.MultiplyVector(normal).normalized * sideSign;
+
         return new Vector4(cnormal.x, cnormal.y, cnormal.z, -Vector3.Dot(cpos, cnormal));
     }
 
-    private static void CalculateObliqueMatrix(ref Matrix4x4 projection, Vector4 clipPlane)
-    {
-        Vector4 q = projection.inverse * new Vector4(
-            sgn(clipPlane.x),
-            sgn(clipPlane.y),
-            1.0f,
-            1.0f
-        );
-        Vector4 c = clipPlane * (2.0F / (Vector4.Dot(clipPlane, q)));
-
-        projection[2] = c.x - projection[3];
-        projection[6] = c.y - projection[7];
-        projection[10] = c.z - projection[11];
-        projection[14] = c.w - projection[15];
-    }
-
-    private static void CalculateReflectionMatrix(ref Matrix4x4 reflectionMat, Vector4 plane)
+    static void CalculateReflectionMatrix(ref Matrix4x4 reflectionMat, Vector4 plane)
     {
         reflectionMat.m00 = (1F - 2F * plane[0] * plane[0]);
         reflectionMat.m01 = (-2F * plane[0] * plane[1]);
@@ -214,4 +140,76 @@ public class MyMirror : MonoBehaviour
         reflectionMat.m32 = 0F;
         reflectionMat.m33 = 1F;
     }
+
+    private void UpdateCameraModes(Camera src, Camera dest)
+    {
+        if (dest == null)
+        {
+            return;
+        }
+
+        dest.clearFlags = src.clearFlags;
+        dest.backgroundColor = src.backgroundColor;
+        if (src.clearFlags == CameraClearFlags.Skybox)
+        {
+            Skybox sky = src.GetComponent<Skybox>();
+            Skybox mysky = dest.GetComponent<Skybox>();
+
+            if (!sky || !sky.material)
+            {
+                mysky.enabled = false;
+            }
+            else
+            {
+                mysky.enabled = true;
+                mysky.material = sky.material;
+            }
+        }
+
+        dest.farClipPlane = src.farClipPlane;
+        dest.nearClipPlane = src.nearClipPlane;
+        dest.orthographic = src.orthographic;
+        dest.fieldOfView = src.fieldOfView;
+        dest.aspect = src.aspect;
+        dest.orthographicSize = src.orthographicSize;
+        dest.renderingPath = src.renderingPath;
+    }
+
+    /// <summary>
+    /// 按需为摄像机创建物体
+    /// </summary>
+    /// <param name="currentCamera"></param>
+    /// <param name="reflectionCamera"></param>
+    private void CreateMirrorObjects(Camera currentCamera, out Camera reflectionCamera)
+    {
+        reflectionCamera = null;
+
+        //当反射相机的渲染贴图不存在或者大小不满足设定值，销毁当前渲染贴图然后重新创建符合大小号的贴图，并完成初始化
+        if (!m_ReflectionTexture || m_OldReflectionTextureSize != textureSize)
+        {
+            if (m_ReflectionTexture)
+            {
+                DestroyImmediate(m_ReflectionTexture);
+            }
+            m_ReflectionTexture = new RenderTexture(textureSize, textureSize, 16);
+            m_ReflectionTexture.name = "_MirrorReflection" + GetInstanceID();
+            m_ReflectionTexture.isPowerOfTwo = true; //渲染纹理是否是2的乘方大小
+            m_ReflectionTexture.hideFlags = HideFlags.DontSave; //该物体不会被保存到场景中。当一个新场景加载的时候也不会被销毁，必须手动DestroyImmediate销毁
+            m_OldReflectionTextureSize = textureSize;
+        }
+
+        m_ReflectionCameras.TryGetValue(currentCamera, out reflectionCamera);
+        if (!reflectionCamera)
+        {
+            GameObject go = new GameObject("MyMirror Reflection Camera id" + GetInstanceID() + "for " + currentCamera.GetInstanceID(), typeof(Camera), typeof(Skybox));
+            reflectionCamera = go.GetComponent<Camera>();
+            reflectionCamera.enabled = false;
+            reflectionCamera.transform.position = transform.position;
+            reflectionCamera.transform.rotation = transform.rotation;
+            reflectionCamera.gameObject.AddComponent<FlareLayer>();
+            go.hideFlags = HideFlags.HideAndDontSave;
+            m_ReflectionCameras[currentCamera] = reflectionCamera;
+        }
+    }
+
 }
