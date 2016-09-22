@@ -57,7 +57,7 @@ public class MyMirror : MonoBehaviour
         Vector3 newpos = reflection.MultiplyPoint(oldpos);
         reflectionCamera.worldToCameraMatrix = cam.worldToCameraMatrix * reflection;
 
-        Vector4 clipPlane = CameraSpacePlane(reflectionCamera, pos, normal, -1.0f);
+        Vector4 clipPlane = CameraSpacePlane(reflectionCamera, pos, normal, 1.0f);
         reflectionCamera.projectionMatrix = cam.CalculateObliqueMatrix(clipPlane);
 
         reflectionCamera.cullingMatrix = cam.projectionMatrix * cam.worldToCameraMatrix;
@@ -92,53 +92,6 @@ public class MyMirror : MonoBehaviour
             DestroyImmediate((kvp.Value).gameObject);
         }
         m_ReflectionCameras.Clear();
-    }
-
-    void Update()
-    {
-        //if (!GetComponent<Renderer>())
-        //{
-        //    return;
-        //}
-        //Material mat = GetComponent<Renderer>().sharedMaterial;
-        //if (!mat)
-        //{
-        //    return;
-        //}
-
-    }
-
-    private Vector4 CameraSpacePlane(Camera cam, Vector3 pos, Vector3 normal, float sideSign)
-    {
-        Vector3 offsetPos = pos + normal * clipPlaneOffset;
-        Matrix4x4 m = cam.worldToCameraMatrix;
-        Vector3 cpos = m.MultiplyPoint(offsetPos);
-        Vector3 cnormal = m.MultiplyVector(normal).normalized * sideSign;
-
-        return new Vector4(cnormal.x, cnormal.y, cnormal.z, -Vector3.Dot(cpos, cnormal));
-    }
-
-    static void CalculateReflectionMatrix(ref Matrix4x4 reflectionMat, Vector4 plane)
-    {
-        reflectionMat.m00 = (1F - 2F * plane[0] * plane[0]);
-        reflectionMat.m01 = (-2F * plane[0] * plane[1]);
-        reflectionMat.m02 = (-2F * plane[0] * plane[2]);
-        reflectionMat.m03 = (-2F * plane[3] * plane[0]);
-
-        reflectionMat.m10 = (-2F * plane[1] * plane[0]);
-        reflectionMat.m11 = (1F - 2F * plane[1] * plane[1]);
-        reflectionMat.m12 = (-2F * plane[1] * plane[2]);
-        reflectionMat.m13 = (-2F * plane[3] * plane[1]);
-
-        reflectionMat.m20 = (-2F * plane[2] * plane[0]);
-        reflectionMat.m21 = (-2F * plane[2] * plane[1]);
-        reflectionMat.m22 = (1F - 2F * plane[2] * plane[2]);
-        reflectionMat.m23 = (-2F * plane[3] * plane[2]);
-
-        reflectionMat.m30 = 0F;
-        reflectionMat.m31 = 0F;
-        reflectionMat.m32 = 0F;
-        reflectionMat.m33 = 1F;
     }
 
     private void UpdateCameraModes(Camera src, Camera dest)
@@ -210,6 +163,39 @@ public class MyMirror : MonoBehaviour
             go.hideFlags = HideFlags.HideAndDontSave;
             m_ReflectionCameras[currentCamera] = reflectionCamera;
         }
+    }
+
+    private Vector4 CameraSpacePlane(Camera cam, Vector3 pos, Vector3 normal, float sideSign)
+    {
+        Vector3 offsetPos = pos + normal * clipPlaneOffset;
+        Matrix4x4 m = cam.worldToCameraMatrix;
+        Vector3 cpos = m.MultiplyPoint(offsetPos);
+        Vector3 cnormal = m.MultiplyVector(normal).normalized * sideSign;
+
+        return new Vector4(cnormal.x, cnormal.y, cnormal.z, -Vector3.Dot(cpos, cnormal));
+    }
+
+    static void CalculateReflectionMatrix(ref Matrix4x4 reflectionMat, Vector4 plane)
+    {
+        reflectionMat.m00 = (1F - 2F * plane[0] * plane[0]);
+        reflectionMat.m01 = (-2F * plane[0] * plane[1]);
+        reflectionMat.m02 = (-2F * plane[0] * plane[2]);
+        reflectionMat.m03 = (-2F * plane[3] * plane[0]);
+
+        reflectionMat.m10 = (-2F * plane[1] * plane[0]);
+        reflectionMat.m11 = (1F - 2F * plane[1] * plane[1]);
+        reflectionMat.m12 = (-2F * plane[1] * plane[2]);
+        reflectionMat.m13 = (-2F * plane[3] * plane[1]);
+
+        reflectionMat.m20 = (-2F * plane[2] * plane[0]);
+        reflectionMat.m21 = (-2F * plane[2] * plane[1]);
+        reflectionMat.m22 = (1F - 2F * plane[2] * plane[2]);
+        reflectionMat.m23 = (-2F * plane[3] * plane[2]);
+
+        reflectionMat.m30 = 0F;
+        reflectionMat.m31 = 0F;
+        reflectionMat.m32 = 0F;
+        reflectionMat.m33 = 1F;
     }
 
 }
